@@ -1,0 +1,98 @@
+import AppKit
+
+/// A newly detected clipboard payload, in priority order of detection.
+enum ClipboardPayload {
+    case files([URL])
+    case image(Data) // PNG bytes
+    case text(String)
+}
+
+/// Watches the system pasteboard for changes.
+///
+/// macOS does not post a notification when the pasteboard changes, so the
+/// standard approach is to poll `NSPasteboard.changeCount` on a short timer and
+/// react when it increments. The polling interval is a balance between latency
+/// (the PRD targets < 100ms detection) and idle CPU use; 0.4s is a common,
+/// battery-friendly compromise for a background utility.
+@MainActor
+final class ClipboardMonitor {
+    /// Called whenever fresh content lands on the pasteboard. Not called for
+    /// changes the app makes itself (see `suppress`).
+    var onNewContent: ((ClipboardPayload) -> Void)?
+
+    private let pasteboard = NSPasteboard.general
+    private var timer: Timer?
+    private var lastChangeCount: Int
+
+    init() {
+        lastChangeCount = pasteboard.changeCount
+    }
+
+    func start(interval: TimeInterval = 0.4) {
+        guard timer == nil else { return }
+        let timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
+            // Timer fires on the main run loop; hop to the main actor for safety.
+            MainActor.assumeIsolated {
+                self?.poll()
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
+    }
+
+    func stop() {
+        timer?.invalidate()
+        timer = nil
+    }
+
+    /// Marks the current pasteboard state as already seen. Call this right after
+    /// the app writes to the pasteboard so the write isn't echoed back as a new
+    /// capture.
+    func suppress() {
+        lastChangeCount = pasteboard.changeCount
+    }
+
+    private func poll() {
+        let current = pasteboard.changeCount
+        guard current != lastChangeCount else { return }
+        lastChangeCount = current
+
+        // Priority: files (Finder) → image (screenshots) → text. A file copy
+        // also carries a path string, and an image copy may carry alt text, so
+        // the richer kinds are checked first.
+        if let urls = readFileURLs() {
+            onNewContent?(.files(urls))
+        } else if let png = readImagePNG() {
+            onNewContent?(.image(png))
+        } else if let text = readText() {
+            onNewContent?(.text(text))
+        }
+    }
+
+    private func readFileURLs() -> [URL]? {
+        let options: [NSPasteboard.ReadingOptionKey: Any] = [.urlReadingFileURLsOnly: true]
+        guard let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: options) as? [URL],
+              !urls.isEmpty
+        else { return nil }
+        return urls
+    }
+
+    /// Returns PNG bytes for any bitmap on the pasteboard, converting from TIFF
+    /// when a PNG representation isn't directly available.
+    private func readImagePNG() -> Data? {
+        if let png = pasteboard.data(forType: .png) {
+            return png
+        }
+        if let tiff = pasteboard.data(forType: .tiff),
+           let rep = NSBitmapImageRep(data: tiff) {
+            return rep.representation(using: .png, properties: [:])
+        }
+        return nil
+    }
+
+    private func readText() -> String? {
+        guard let text = pasteboard.string(forType: .string) else { return nil }
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        return text
+    }
+}
