@@ -26,6 +26,10 @@ struct MainView: View {
         @Bindable var viewModel = viewModel
 
         VStack(spacing: 0) {
+            if viewModel.isPrivateMode {
+                privateModeBanner
+            }
+
             SearchBarView(text: $viewModel.searchText)
                 .padding(.horizontal, 12)
                 .padding(.top, 12)
@@ -48,6 +52,19 @@ struct MainView: View {
             footer
         }
         .frame(width: 360, height: 480)
+    }
+
+    private var privateModeBanner: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "eye.slash.fill")
+            Text("Private Mode — not tracking the clipboard")
+            Spacer()
+        }
+        .font(.caption.weight(.medium))
+        .foregroundStyle(.white)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(.orange)
     }
 
     // MARK: - Filtering
@@ -140,6 +157,25 @@ struct MainView: View {
             .disabled(recentItems.isEmpty)
 
             Spacer()
+
+            Button {
+                viewModel.isPrivateMode.toggle()
+            } label: {
+                Label(
+                    viewModel.isPrivateMode ? "Tracking Off" : "Private",
+                    systemImage: viewModel.isPrivateMode ? "eye.slash.fill" : "eye.slash"
+                )
+            }
+            .buttonStyle(.borderless)
+            .foregroundStyle(viewModel.isPrivateMode ? .orange : .secondary)
+            .help("Pause clipboard tracking")
+
+            Button {
+                viewModel.openSnippets?()
+            } label: {
+                Label("Snippets", systemImage: "note.text")
+            }
+            .buttonStyle(.borderless)
 
             Button {
                 NSApplication.shared.terminate(nil)

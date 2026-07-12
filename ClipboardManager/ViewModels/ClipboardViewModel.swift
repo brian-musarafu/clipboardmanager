@@ -12,6 +12,13 @@ final class ClipboardViewModel {
     /// Live search text bound to the search field.
     var searchText: String = ""
 
+    /// Opens the snippet library window. Wired up by `AppEnvironment`.
+    var openSnippets: (() -> Void)?
+
+    /// While on, the clipboard is not tracked (Private Mode). Session-only — it
+    /// resets to off on relaunch so tracking never stays silently disabled.
+    var isPrivateMode = false
+
     /// Most recent history is trimmed to this many *unpinned* items so the store
     /// doesn't grow without bound. Pinned items are always kept.
     let historyLimit = 100
@@ -32,6 +39,7 @@ final class ClipboardViewModel {
     // MARK: - Capture
 
     private func capture(_ payload: ClipboardPayload) {
+        guard !isPrivateMode else { return } // Private Mode: don't track anything.
         switch payload {
         case .text(let text):
             captureText(text)
@@ -45,12 +53,27 @@ final class ClipboardViewModel {
     private func captureText(_ text: String) {
         // Skip if identical to the newest stored item (e.g. rapid re-copies, or
         // our own write-back that slipped past `suppress`).
-        if let newest = fetchNewest(), newest.kind != .image, newest.content == text {
+        if let newest = fetchNewest(), newest.kind != .image, plaintextMatches(newest, text) {
             newest.createdAt = .now
             try? modelContext.save()
             return
         }
-        insert(ClipboardItem(content: text, type: detectType(text)))
+
+        // Secrets (card numbers, SSNs) are stored encrypted and redacted.
+        if SensitiveContentDetector.isSensitive(text), let cipher = CryptoService.encryptToString(text) {
+            insert(ClipboardItem(content: cipher, type: detectType(text), isSensitive: true, isEncrypted: true))
+        } else {
+            insert(ClipboardItem(content: text, type: detectType(text)))
+        }
+    }
+
+    /// Compares against a stored item, decrypting first if needed, so an
+    /// encrypted secret still de-dupes against a rapid re-copy.
+    private func plaintextMatches(_ item: ClipboardItem, _ text: String) -> Bool {
+        if item.isEncrypted {
+            return CryptoService.decryptFromString(item.content) == text
+        }
+        return item.content == text
     }
 
     private func captureImage(_ data: Data) {
@@ -143,6 +166,13 @@ final class ClipboardViewModel {
         item.createdAt = .now
         try? modelContext.save()
 
+        // Sensitive items require authentication before their secret leaves the
+        // encrypted store.
+        if item.isSensitive {
+            Task { await pasteSensitive(item) }
+            return
+        }
+
         if let url = linkURL(for: item) {
             NSApp.hide(nil) // return focus to the previous app / browser
             NSWorkspace.shared.open(url)
@@ -151,11 +181,48 @@ final class ClipboardViewModel {
         }
     }
 
+    /// Decrypts a sensitive item behind Touch ID, then pastes it.
+    private func pasteSensitive(_ item: ClipboardItem) async {
+        guard let plaintext = await revealPlaintext(of: item) else { return }
+        writePlaintextConcealed(plaintext)
+        NSApp.hide(nil)
+        try? await Task.sleep(for: .milliseconds(120))
+        PasteService.pasteToFrontmostApp()
+    }
+
+    /// Puts a secret on the pasteboard marked concealed, so neither we nor other
+    /// clipboard managers re-capture it.
+    private func writePlaintextConcealed(_ plaintext: String) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(plaintext, forType: NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType"))
+        pasteboard.setString(plaintext, forType: .string)
+        monitor.suppress()
+    }
+
+    /// Returns the decrypted plaintext of a sensitive item after the user
+    /// authenticates (Touch ID / password); nil if authentication fails.
+    func revealPlaintext(of item: ClipboardItem) async -> String? {
+        guard item.isSensitive else { return item.content }
+        guard await AuthService.authenticate(reason: "reveal sensitive clipboard content") else {
+            return nil
+        }
+        return item.isEncrypted ? CryptoService.decryptFromString(item.content) : item.content
+    }
+
     /// Copies the item without pasting (used from the context menu).
     func copyToClipboard(_ item: ClipboardItem) {
-        writeToPasteboard(item)
         item.createdAt = .now
         try? modelContext.save()
+        if item.isSensitive {
+            Task {
+                if let plaintext = await revealPlaintext(of: item) {
+                    writePlaintextConcealed(plaintext)
+                }
+            }
+        } else {
+            writeToPasteboard(item)
+        }
     }
 
     /// Opens a `.file` item in its default app, or reveals it in Finder.
@@ -224,10 +291,14 @@ final class ClipboardViewModel {
             NSSound.beep()
             return
         }
-        writeToPasteboard(item)
         item.createdAt = .now
         try? modelContext.save()
-        PasteService.pasteToFrontmostApp()
+        if item.isSensitive {
+            Task { await pasteSensitive(item) }
+        } else {
+            writeToPasteboard(item)
+            PasteService.pasteToFrontmostApp()
+        }
     }
 
     /// Places the item on the pasteboard, dismisses our window so the previously

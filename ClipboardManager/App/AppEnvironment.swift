@@ -2,15 +2,19 @@ import Carbon.HIToolbox
 import SwiftData
 import SwiftUI
 
-/// The app's object graph: the SwiftData store, the view model, and the global
-/// shortcut / quick-access wiring. Created once by `AppDelegate` and shared with
-/// the SwiftUI scene so the menu-bar window and the ⌘⇧V panel stay in sync.
+/// The app's object graph: the SwiftData store, view models, global shortcuts,
+/// quick-access panel, snippet library, and text-expansion engine. Created once
+/// by `AppDelegate` and shared with the SwiftUI scene so every surface stays in
+/// sync.
 @MainActor
 final class AppEnvironment {
     let container: ModelContainer
     let viewModel: ClipboardViewModel
+    let snippetsViewModel: SnippetsViewModel
 
     private let hotKeys = HotKeyManager()
+    private let expander = TextExpansionService()
+
     private lazy var quickAccessPanel = QuickAccessPanelController(
         rootView: AnyView(
             MainView()
@@ -19,16 +23,26 @@ final class AppEnvironment {
         )
     )
 
+    private lazy var snippetsWindow = SnippetsWindowController(
+        rootView: AnyView(
+            SnippetsView()
+                .environment(snippetsViewModel)
+                .modelContainer(container)
+        )
+    )
+
     init() {
         do {
-            container = try ModelContainer(for: ClipboardItem.self)
+            container = try ModelContainer(for: ClipboardItem.self, Snippet.self)
         } catch {
             fatalError("Failed to create SwiftData container: \(error)")
         }
         viewModel = ClipboardViewModel(modelContext: container.mainContext)
+        snippetsViewModel = SnippetsViewModel(modelContext: container.mainContext)
     }
 
-    /// Registers global shortcuts. Call once, after the app finishes launching.
+    /// Registers global shortcuts and starts text expansion. Call once, after the
+    /// app finishes launching.
     func bootstrap() {
         // ⌘⇧V — summon / dismiss the quick-access panel.
         hotKeys.register(keyCode: kVK_ANSI_V, modifiers: HotKeyManager.command | HotKeyManager.shift) { [weak self] in
@@ -39,8 +53,18 @@ final class AppEnvironment {
             self?.viewModel.pasteMostRecentPinned()
         }
 
-        if ProcessInfo.processInfo.environment["CLIP_SHOW_PANEL"] != nil {
-            quickAccessPanel.show()
+        // Let the menu-bar UI open the snippet library.
+        viewModel.openSnippets = { [weak self] in
+            self?.snippetsWindow.show()
         }
+
+        // Snippets & text expansion.
+        snippetsViewModel.seedDefaultsIfEmpty()
+        snippetsViewModel.onSnippetsChanged = { [weak self] in
+            guard let self else { return }
+            self.expander.setRules(self.snippetsViewModel.currentRules())
+        }
+        expander.setRules(snippetsViewModel.currentRules())
+        expander.start()
     }
 }

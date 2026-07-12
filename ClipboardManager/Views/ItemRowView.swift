@@ -13,14 +13,18 @@ struct ItemRowView: View {
     @State private var justCopied = false
     @State private var showImagePreview = false
     @State private var showDetail = false
+    @State private var showReveal = false
+    @State private var revealedText: String?
 
     private var isLink: Bool { viewModel.linkURL(for: item) != nil }
 
     /// Text-like kinds get the smart-detail popover (links, JSON, color, QR…).
+    /// Sensitive items are excluded — their content is encrypted ciphertext.
     private var isTextual: Bool {
+        guard !item.isSensitive else { return false }
         switch item.kind {
-        case .text, .code, .url, .note: true
-        case .image, .file: false
+        case .text, .code, .url, .note: return true
+        case .image, .file: return false
         }
     }
 
@@ -34,11 +38,12 @@ struct ItemRowView: View {
                 leadingIcon
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(item.displayText)
+                    Text(item.isSensitive ? "Sensitive content" : item.displayText)
                         .lineLimit(2)
                         .truncationMode(.middle)
                         .font(.callout)
-                        .foregroundStyle(.primary)
+                        .foregroundStyle(item.isSensitive ? .secondary : .primary)
+                        .italic(item.isSensitive)
                     Text(subtitle)
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
@@ -88,12 +93,41 @@ struct ItemRowView: View {
             SmartDetailView(item: item)
                 .environment(viewModel)
         }
+        .popover(isPresented: $showReveal, arrowEdge: .trailing) {
+            VStack(alignment: .leading, spacing: 8) {
+                Label("Revealed", systemImage: "lock.open")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Text(revealedText ?? "")
+                    .font(.system(.callout, design: .monospaced))
+                    .textSelection(.enabled)
+                Button("Copy") {
+                    viewModel.copyToClipboard(item)
+                    showReveal = false
+                }
+                .controlSize(.small)
+            }
+            .padding(12)
+            .frame(minWidth: 220, maxWidth: 300)
+        }
     }
 
     // MARK: - Leading icon / thumbnail
 
     @ViewBuilder
     private var leadingIcon: some View {
+        if item.isSensitive {
+            Image(systemName: "lock.fill")
+                .font(.body)
+                .foregroundStyle(.orange)
+                .frame(width: 24)
+        } else {
+            kindIcon
+        }
+    }
+
+    @ViewBuilder
+    private var kindIcon: some View {
         switch item.kind {
         case .image:
             if let image = item.image {
@@ -141,6 +175,13 @@ struct ItemRowView: View {
 
     private var rowActions: some View {
         HStack(spacing: 6) {
+            if item.isSensitive {
+                Button { reveal() } label: {
+                    Image(systemName: "eye")
+                }
+                .help("Reveal (requires authentication)")
+            }
+
             if item.kind == .image {
                 Button { showImagePreview = true } label: {
                     Image(systemName: "eye")
@@ -177,25 +218,30 @@ struct ItemRowView: View {
 
     @ViewBuilder
     private var contextMenu: some View {
-        switch item.kind {
-        case .file:
+        if item.isSensitive {
+            Button("Reveal…") { reveal() }
             Button("Paste") { viewModel.activate(item) }
-            Button("Open") { viewModel.openFile(item) }
-            Button("Reveal in Finder") { viewModel.revealInFinder(item) }
-        case .image:
-            Button("Paste") { viewModel.activate(item) }
-            Button("Preview") { showImagePreview = true }
-        default:
-            if isLink {
-                Button("Open Link") { viewModel.activate(item) }
-            } else {
+        } else {
+            switch item.kind {
+            case .file:
                 Button("Paste") { viewModel.activate(item) }
+                Button("Open") { viewModel.openFile(item) }
+                Button("Reveal in Finder") { viewModel.revealInFinder(item) }
+            case .image:
+                Button("Paste") { viewModel.activate(item) }
+                Button("Preview") { showImagePreview = true }
+            default:
+                if isLink {
+                    Button("Open Link") { viewModel.activate(item) }
+                } else {
+                    Button("Paste") { viewModel.activate(item) }
+                }
             }
+            if isTextual {
+                Button("Smart Actions…") { showDetail = true }
+            }
+            Button("Copy") { copyOnly() }
         }
-        if isTextual {
-            Button("Smart Actions…") { showDetail = true }
-        }
-        Button("Copy") { copyOnly() }
         Divider()
         Button(item.isPinned ? "Unpin" : "Pin") { viewModel.togglePin(item) }
         Button(item.isFavorite ? "Remove Favorite" : "Favorite") { viewModel.toggleFavorite(item) }
@@ -205,6 +251,10 @@ struct ItemRowView: View {
     // MARK: - Drag & drop
 
     private func dragProvider() -> NSItemProvider {
+        // Never expose a secret's ciphertext (or plaintext) via drag.
+        if item.isSensitive {
+            return NSItemProvider(object: "Sensitive content" as NSString)
+        }
         switch item.kind {
         case .image:
             if let image = item.image {
@@ -224,6 +274,16 @@ struct ItemRowView: View {
 
     private func activate() {
         viewModel.activate(item)
+    }
+
+    /// Authenticates, then shows the decrypted secret in a popover.
+    private func reveal() {
+        Task {
+            if let plaintext = await viewModel.revealPlaintext(of: item) {
+                revealedText = plaintext
+                showReveal = true
+            }
+        }
     }
 
     private func copyOnly() {

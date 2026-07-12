@@ -36,13 +36,23 @@ final class ClipboardItem {
     /// migration-safe addition to the Phase 1–2 schema.
     @Attribute(.externalStorage) var imageData: Data?
 
+    /// Heuristically detected secret (e.g. a card number). Redacted in the UI and
+    /// revealed only after authentication.
+    var isSensitive: Bool = false
+
+    /// Whether `content` holds ciphertext (see `CryptoService`). Sensitive items
+    /// are encrypted at rest so the raw store never exposes the secret.
+    var isEncrypted: Bool = false
+
     init(
         content: String,
         type: ItemType = .text,
         createdAt: Date = .now,
         isPinned: Bool = false,
         isFavorite: Bool = false,
-        imageData: Data? = nil
+        imageData: Data? = nil,
+        isSensitive: Bool = false,
+        isEncrypted: Bool = false
     ) {
         self.id = UUID()
         self.content = content
@@ -51,6 +61,8 @@ final class ClipboardItem {
         self.isPinned = isPinned
         self.isFavorite = isFavorite
         self.imageData = imageData
+        self.isSensitive = isSensitive
+        self.isEncrypted = isEncrypted
     }
 
     /// Typed accessor for `type`, falling back to `.text` for unknown values.
