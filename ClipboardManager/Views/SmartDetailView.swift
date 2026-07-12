@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import Translation
 
 /// The "smart" detail popover for a text item: shows the full content plus
 /// contextual actions based on what was detected (link, email, color, JSON) and
@@ -13,12 +14,15 @@ struct SmartDetailView: View {
     @State private var jsonResult: String?
     @State private var flash: String?
     @State private var showQR = false
+    @State private var summary: String?
+    @State private var showTranslation = false
 
     private var content: String { item.content }
     private var url: URL? { SmartContentDetector.detectURL(content) }
     private var email: String? { SmartContentDetector.detectEmail(content) }
     private var color: NSColor? { SmartContentDetector.detectColor(content) }
     private var isJSONish: Bool { SmartContentDetector.looksLikeJSON(content) }
+    private var language: String? { AIService.dominantLanguage(of: content) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -28,6 +32,7 @@ struct SmartDetailView: View {
             if let email { emailSection(email) }
             if let color { colorSection(color) }
             if isJSONish { jsonSection }
+            aiSection
             qrSection
 
             if let flash {
@@ -39,6 +44,35 @@ struct SmartDetailView: View {
         }
         .padding(14)
         .frame(width: 300)
+        .translation(isPresented: $showTranslation, text: content)
+    }
+
+    @ViewBuilder
+    private var aiSection: some View {
+        section("AI") {
+            if let language {
+                HStack {
+                    Text("Language").foregroundStyle(.secondary)
+                    Spacer()
+                    Text(language)
+                }
+                .font(.caption)
+            }
+            HStack(spacing: 6) {
+                actionButton("Summarize", "text.append") {
+                    summary = AIService.summarize(content)
+                }
+                actionButton("Translate", "character.bubble") {
+                    showTranslation = true
+                }
+            }
+            if let summary {
+                Text(summary)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            }
+        }
     }
 
     // MARK: - Sections
@@ -189,6 +223,19 @@ struct SmartDetailView: View {
         Task {
             try? await Task.sleep(for: .seconds(1.4))
             withAnimation { flash = nil }
+        }
+    }
+}
+
+private extension View {
+    /// Presents Apple's system translation UI. Gracefully no-ops before macOS
+    /// 14.4, where the presentation API isn't available.
+    @ViewBuilder
+    func translation(isPresented: Binding<Bool>, text: String) -> some View {
+        if #available(macOS 14.4, *) {
+            translationPresentation(isPresented: isPresented, text: text)
+        } else {
+            self
         }
     }
 }

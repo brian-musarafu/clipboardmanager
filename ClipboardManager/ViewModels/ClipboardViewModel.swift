@@ -327,6 +327,13 @@ final class ClipboardViewModel {
         NSWorkspace.shared.open(url)
     }
 
+    /// Saves text (e.g. from OCR) as a new history item.
+    func saveText(_ text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        insert(ClipboardItem(content: text, type: detectType(text)))
+    }
+
     /// Opens a new mail compose window addressed to `address`.
     func composeEmail(to address: String) {
         guard let url = URL(string: "mailto:\(address)") else { return }

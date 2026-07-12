@@ -21,6 +21,7 @@ struct MainView: View {
 
     @State private var category: CategoryFilter = .all
     @State private var favoritesOnly = false
+    @State private var launchAtLogin = LoginItemService.isEnabled
 
     var body: some View {
         @Bindable var viewModel = viewModel
@@ -52,6 +53,9 @@ struct MainView: View {
             footer
         }
         .frame(width: 360, height: 480)
+        .onChange(of: launchAtLogin) { _, enabled in
+            LoginItemService.setEnabled(enabled)
+        }
     }
 
     private var privateModeBanner: some View {
@@ -178,6 +182,8 @@ struct MainView: View {
             .buttonStyle(.borderless)
 
             Menu {
+                Toggle("Launch at Login", isOn: $launchAtLogin)
+                Divider()
                 Button("Export Backup (JSON)…") { viewModel.exportBackup() }
                 Button("Export History (CSV)…") { viewModel.exportCSV() }
                 Divider()

@@ -15,6 +15,9 @@ struct ItemRowView: View {
     @State private var showDetail = false
     @State private var showReveal = false
     @State private var revealedText: String?
+    @State private var showOCR = false
+    @State private var ocrText = ""
+    @State private var ocrRunning = false
 
     private var isLink: Bool { viewModel.linkURL(for: item) != nil }
 
@@ -92,6 +95,29 @@ struct ItemRowView: View {
         .popover(isPresented: $showDetail, arrowEdge: .trailing) {
             SmartDetailView(item: item)
                 .environment(viewModel)
+        }
+        .popover(isPresented: $showOCR, arrowEdge: .trailing) {
+            VStack(alignment: .leading, spacing: 8) {
+                Label("Extracted Text", systemImage: "text.viewfinder")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                ScrollView {
+                    Text(ocrText.isEmpty ? "No text found." : ocrText)
+                        .font(.system(.callout, design: .monospaced))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxHeight: 160)
+                if !ocrText.isEmpty {
+                    HStack {
+                        Button("Copy") { viewModel.copyString(ocrText); showOCR = false }
+                        Button("Add to History") { viewModel.saveText(ocrText); showOCR = false }
+                    }
+                    .controlSize(.small)
+                }
+            }
+            .padding(12)
+            .frame(width: 280)
         }
         .popover(isPresented: $showReveal, arrowEdge: .trailing) {
             VStack(alignment: .leading, spacing: 8) {
@@ -187,6 +213,12 @@ struct ItemRowView: View {
                     Image(systemName: "eye")
                 }
                 .help("Preview")
+
+                Button { runOCR() } label: {
+                    Image(systemName: ocrRunning ? "hourglass" : "text.viewfinder")
+                }
+                .help("Extract text (OCR)")
+                .disabled(ocrRunning)
             }
 
             if isTextual {
@@ -230,6 +262,7 @@ struct ItemRowView: View {
             case .image:
                 Button("Paste") { viewModel.activate(item) }
                 Button("Preview") { showImagePreview = true }
+                Button("Extract Text (OCR)") { runOCR() }
             default:
                 if isLink {
                     Button("Open Link") { viewModel.activate(item) }
@@ -274,6 +307,18 @@ struct ItemRowView: View {
 
     private func activate() {
         viewModel.activate(item)
+    }
+
+    /// Runs on-device OCR on an image item and shows the result.
+    private func runOCR() {
+        guard let data = item.imageData, !ocrRunning else { return }
+        ocrRunning = true
+        Task {
+            let text = await AIService.recognizeText(in: data)
+            ocrText = text
+            ocrRunning = false
+            showOCR = true
+        }
     }
 
     /// Authenticates, then shows the decrypted secret in a popover.
