@@ -177,6 +177,18 @@ struct MainView: View {
             }
             .buttonStyle(.borderless)
 
+            Menu {
+                Button("Export Backup (JSON)…") { viewModel.exportBackup() }
+                Button("Export History (CSV)…") { viewModel.exportCSV() }
+                Divider()
+                Button("Import Backup…") { viewModel.importBackup() }
+            } label: {
+                Image(systemName: "ellipsis.circle")
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .help("Backup & restore")
+
             Button {
                 NSApplication.shared.terminate(nil)
             } label: {

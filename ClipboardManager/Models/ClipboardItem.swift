@@ -13,23 +13,25 @@ import SwiftData
 /// - image → `imageData` holds PNG bytes and `content` holds a short caption.
 @Model
 final class ClipboardItem {
-    /// Stable identity, also used to de-duplicate across launches.
-    @Attribute(.unique) var id: UUID
+    /// Stable identity. Not marked `.unique` because CloudKit sync (Phase 7)
+    /// disallows uniqueness constraints; de-duplication is handled in the view
+    /// model by content instead.
+    var id: UUID = UUID()
 
     /// Text content, a file path (for `.file`), or a caption (for `.image`).
-    var content: String
+    var content: String = ""
 
     /// Raw value of an `ItemType`.
-    var type: String
+    var type: String = ItemType.text.rawValue
 
     /// When the content was captured.
-    var createdAt: Date
+    var createdAt: Date = Date.now
 
     /// Pinned items are surfaced above the recent list and never auto-trimmed.
-    var isPinned: Bool
+    var isPinned: Bool = false
 
     /// Marked as a favorite by the user.
-    var isFavorite: Bool
+    var isFavorite: Bool = false
 
     /// PNG bytes for `.image` entries. Stored outside the database file so large
     /// screenshots don't bloat the store. Optional — this is a lightweight,

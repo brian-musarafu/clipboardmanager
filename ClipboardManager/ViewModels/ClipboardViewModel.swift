@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import SwiftData
+import UniformTypeIdentifiers
 
 /// Coordinates clipboard capture and the actions the UI performs on history
 /// items. Views read the history through `@Query`, so this view model owns the
@@ -235,6 +236,79 @@ final class ClipboardViewModel {
     func revealInFinder(_ item: ClipboardItem) {
         guard let url = item.fileURL else { return }
         NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
+
+    // MARK: - Backup & restore (Phase 7)
+
+    /// Builds the JSON backup for the current store (sensitive items excluded).
+    func backupData() -> Data? {
+        let items = (try? modelContext.fetch(FetchDescriptor<ClipboardItem>())) ?? []
+        let snippets = (try? modelContext.fetch(FetchDescriptor<Snippet>())) ?? []
+        return try? BackupService.encodeJSON(items: items, snippets: snippets)
+    }
+
+    /// Exports history + snippets to a JSON backup file (sensitive items excluded).
+    func exportBackup() {
+        guard let data = backupData() else { return }
+        writeWithSavePanel(data: data, suggestedName: "ClipboardManager-Backup.json", type: .json)
+    }
+
+    /// Exports history to a CSV file (images and sensitive items excluded).
+    func exportCSV() {
+        let items = (try? modelContext.fetch(
+            FetchDescriptor<ClipboardItem>(sortBy: [SortDescriptor(\.createdAt, order: .reverse)])
+        )) ?? []
+        let csv = BackupService.encodeCSV(items: items)
+        guard let data = csv.data(using: .utf8) else { return }
+        writeWithSavePanel(data: data, suggestedName: "ClipboardManager-History.csv", type: .commaSeparatedText)
+    }
+
+    /// Imports a JSON backup, merging items and snippets (skipping duplicates).
+    func importBackup() {
+        NSApp.activate(ignoringOtherApps: true)
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.json]
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url,
+              let data = try? Data(contentsOf: url),
+              let payload = try? BackupService.decodeJSON(data)
+        else { return }
+        merge(payload)
+    }
+
+    private func merge(_ payload: BackupService.Payload) {
+        // De-dupe against what's already stored.
+        let existingItems = (try? modelContext.fetch(FetchDescriptor<ClipboardItem>())) ?? []
+        var seenContent = Set(existingItems.map { "\($0.type)\u{1}\($0.content)" })
+        for dto in payload.items {
+            let key = "\(dto.type)\u{1}\(dto.content)"
+            guard !seenContent.contains(key) else { continue }
+            seenContent.insert(key)
+            let item = ClipboardItem(
+                content: dto.content,
+                type: ItemType(rawValue: dto.type) ?? .text,
+                createdAt: dto.createdAt,
+                isPinned: dto.isPinned,
+                isFavorite: dto.isFavorite,
+                imageData: dto.imageBase64.flatMap { Data(base64Encoded: $0) }
+            )
+            modelContext.insert(item)
+        }
+
+        let existingTriggers = Set(((try? modelContext.fetch(FetchDescriptor<Snippet>())) ?? []).map(\.trigger))
+        for dto in payload.snippets where !existingTriggers.contains(dto.trigger) {
+            modelContext.insert(Snippet(title: dto.title, trigger: dto.trigger, content: dto.content))
+        }
+        try? modelContext.save()
+    }
+
+    private func writeWithSavePanel(data: Data, suggestedName: String, type: UTType) {
+        NSApp.activate(ignoringOtherApps: true)
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [type]
+        panel.nameFieldStringValue = suggestedName
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        try? data.write(to: url)
     }
 
     // MARK: - Smart actions (Phase 4)

@@ -32,13 +32,27 @@ final class AppEnvironment {
     )
 
     init() {
+        container = Self.makeContainer()
+        viewModel = ClipboardViewModel(modelContext: container.mainContext)
+        snippetsViewModel = SnippetsViewModel(modelContext: container.mainContext)
+    }
+
+    /// Builds the SwiftData store.
+    ///
+    /// `cloudKitDatabase: .automatic` means: sync history & snippets through the
+    /// user's private iCloud database **if** the CloudKit capability is enabled,
+    /// otherwise run purely local. The models are CloudKit-compatible (no unique
+    /// constraints, every attribute defaulted), so enabling sync later is just a
+    /// matter of adding the iCloud capability in Xcode — no code change. It's
+    /// local today because the signing account can't provision CloudKit yet.
+    private static func makeContainer() -> ModelContainer {
+        let schema = Schema([ClipboardItem.self, Snippet.self])
+        let configuration = ModelConfiguration(schema: schema, cloudKitDatabase: .automatic)
         do {
-            container = try ModelContainer(for: ClipboardItem.self, Snippet.self)
+            return try ModelContainer(for: schema, configurations: configuration)
         } catch {
             fatalError("Failed to create SwiftData container: \(error)")
         }
-        viewModel = ClipboardViewModel(modelContext: container.mainContext)
-        snippetsViewModel = SnippetsViewModel(modelContext: container.mainContext)
     }
 
     /// Registers global shortcuts and starts text expansion. Call once, after the
