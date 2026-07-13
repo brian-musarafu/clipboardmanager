@@ -37,17 +37,20 @@ final class AppEnvironment {
         snippetsViewModel = SnippetsViewModel(modelContext: container.mainContext)
     }
 
-    /// Builds the SwiftData store.
+    /// Builds the SwiftData store — **explicitly local**.
     ///
-    /// `cloudKitDatabase: .automatic` means: sync history & snippets through the
-    /// user's private iCloud database **if** the CloudKit capability is enabled,
-    /// otherwise run purely local. The models are CloudKit-compatible (no unique
-    /// constraints, every attribute defaulted), so enabling sync later is just a
-    /// matter of adding the iCloud capability in Xcode — no code change. It's
-    /// local today because the signing account can't provision CloudKit yet.
+    /// The models are already CloudKit-compatible (no unique constraints, every
+    /// attribute defaulted). To turn on iCloud sync once the CloudKit capability
+    /// is available, change `.none` to `.automatic` below and add the iCloud
+    /// capability in Xcode.
+    ///
+    /// It is deliberately `.none` (not `.automatic`): with `.automatic` but no
+    /// real iCloud account/entitlement, SwiftData still stands up CloudKit
+    /// mirroring on the store, which destabilised the local history. Keep it
+    /// local until sync is genuinely provisioned.
     private static func makeContainer() -> ModelContainer {
         let schema = Schema([ClipboardItem.self, Snippet.self])
-        let configuration = ModelConfiguration(schema: schema, cloudKitDatabase: .automatic)
+        let configuration = ModelConfiguration(schema: schema, cloudKitDatabase: .none)
         do {
             return try ModelContainer(for: schema, configurations: configuration)
         } catch {

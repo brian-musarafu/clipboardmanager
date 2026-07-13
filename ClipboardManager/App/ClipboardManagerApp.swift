@@ -6,7 +6,7 @@ struct ClipboardManagerApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     var body: some Scene {
-        MenuBarExtra("Clipboard Manager", systemImage: "doc.on.clipboard") {
+        MenuBarExtra("Clipio", systemImage: "doc.on.clipboard") {
             MainView()
                 .environment(appDelegate.environment.viewModel)
                 .modelContainer(appDelegate.environment.container)

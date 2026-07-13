@@ -1,4 +1,4 @@
-# Clipboard Manager Pro
+# Clipio
 
 A fast, private, native macOS clipboard manager. Lives in the menu bar, keeps a
 searchable history of everything you copy, expands text snippets, and adds
@@ -75,7 +75,7 @@ Click the ✨ button on a text item for context-aware actions:
 
 ## Permissions
 
-Clipboard Manager Pro needs one system permission for two of its features:
+Clipio needs one system permission for two of its features:
 
 - **Accessibility** (System Settings → Privacy & Security → Accessibility) —
   required to paste into other apps and to run global text expansion.
@@ -103,20 +103,23 @@ xcodebuild -project ClipboardManager.xcodeproj -scheme ClipboardManager \
 
 Or just open `ClipboardManager.xcodeproj` in Xcode and press ⌘R.
 
-The Release app installs to `/Applications/ClipboardManager.app`.
+The Release app installs to `/Applications/Clipio.app`.
 
 ---
 
 ## Enabling iCloud sync
 
-Sync is fully wired in code — the models are CloudKit-compatible and the store
-uses `cloudKitDatabase: .automatic`, so it activates with **no code change**
-once the capability is available. To enable it:
+Sync is wired in code — the models are CloudKit-compatible. The store is
+currently **local** (`cloudKitDatabase: .none` in `AppEnvironment`); it is
+deliberately *not* `.automatic`, because that stands up CloudKit mirroring on
+the local store even without an iCloud account and can destabilise local data.
+To enable real sync:
 
 1. The Apple Developer **account holder accepts the current Program License
    Agreement** at developer.apple.com.
 2. In Xcode → target → **Signing & Capabilities**, add the **iCloud** capability
    and check **CloudKit** (container `iCloud.com.brianmusarafu.ClipboardManager`).
+3. Change `.none` to `.automatic` in `AppEnvironment.makeContainer()`.
 
 > Note: sensitive (encrypted) items use a device-local Keychain key, so they
 > won't decrypt on other devices. Consider excluding them from sync or moving
