@@ -24,4 +24,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         environment.bootstrap()
     }
+
+    /// Final flush on quit. Sudden termination is disabled (see `bootstrap`), so
+    /// this is guaranteed to run and checkpoint any pending writes to the store.
+    func applicationWillTerminate(_ notification: Notification) {
+        try? environment.container.mainContext.save()
+    }
 }

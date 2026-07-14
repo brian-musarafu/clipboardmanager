@@ -24,11 +24,24 @@ final class ClipboardMonitor {
     private var timer: Timer?
     private var lastChangeCount: Int
 
+    /// Poll cadence, remembered so we can re-arm the timer on wake.
+    private var pollInterval: TimeInterval = 0.4
+
     init() {
         lastChangeCount = pasteboard.changeCount
+
+        // After the Mac sleeps (e.g. the lid is closed) and wakes, run-loop timers
+        // can come back coalesced or stalled. Re-arm the poll on wake so capture
+        // never silently stops until the app is restarted.
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.rearmAfterWake() }
+        }
     }
 
     func start(interval: TimeInterval = 0.4) {
+        pollInterval = interval
         guard timer == nil else { return }
         let timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
             // Timer fires on the main run loop; hop to the main actor for safety.
@@ -38,6 +51,15 @@ final class ClipboardMonitor {
         }
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
+    }
+
+    /// Tears down and recreates the poll timer, then checks the pasteboard once
+    /// immediately. Called on system wake.
+    private func rearmAfterWake() {
+        timer?.invalidate()
+        timer = nil
+        start(interval: pollInterval)
+        poll()
     }
 
     func stop() {

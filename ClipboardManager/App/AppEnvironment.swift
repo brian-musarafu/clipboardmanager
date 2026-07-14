@@ -15,6 +15,10 @@ final class AppEnvironment {
     private let hotKeys = HotKeyManager()
     private let expander = TextExpansionService()
 
+    /// Holds off App Nap so the clipboard-polling timer keeps firing while the app
+    /// sits idle in the menu bar. Retained for the app's lifetime; released on quit.
+    private var activityToken: NSObjectProtocol?
+
     private lazy var quickAccessPanel = QuickAccessPanelController(
         rootView: AnyView(
             MainView()
@@ -50,7 +54,12 @@ final class AppEnvironment {
     /// local until sync is genuinely provisioned.
     private static func makeContainer() -> ModelContainer {
         let schema = Schema([ClipboardItem.self, Snippet.self])
-        let configuration = ModelConfiguration(schema: schema, cloudKitDatabase: .none)
+        // Use a **dedicated, named** store — not SwiftData's default. The default
+        // lands at the shared `~/Library/Application Support/default.store`, the
+        // same path every other unsandboxed SwiftData app defaults to; another app
+        // opening or resetting that file can silently wipe our history. A private
+        // file at a deterministic path keeps the store ours alone.
+        let configuration = ModelConfiguration(schema: schema, url: storeURL(), cloudKitDatabase: .none)
         do {
             return try ModelContainer(for: schema, configurations: configuration)
         } catch {
@@ -58,9 +67,29 @@ final class AppEnvironment {
         }
     }
 
+    /// `~/Library/Application Support/Clipio/Clipio.store`, creating the folder if
+    /// needed. A fixed, app-specific location so history survives every relaunch.
+    private static func storeURL() -> URL {
+        let fm = FileManager.default
+        let base = (try? fm.url(for: .applicationSupportDirectory, in: .userDomainMask,
+                                appropriateFor: nil, create: true))
+            ?? fm.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support")
+        let dir = base.appendingPathComponent("Clipio", isDirectory: true)
+        try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir.appendingPathComponent("Clipio.store")
+    }
+
     /// Registers global shortcuts and starts text expansion. Call once, after the
     /// app finishes launching.
     func bootstrap() {
+        // Keep the app out of App Nap so the pasteboard poll never gets throttled
+        // to a stop. This allows normal system sleep but disables sudden/automatic
+        // termination, so the SwiftData store also always closes cleanly.
+        activityToken = ProcessInfo.processInfo.beginActivity(
+            options: [.userInitiatedAllowingIdleSystemSleep],
+            reason: "Continuous clipboard monitoring"
+        )
+
         // ⌘⇧V — summon / dismiss the quick-access panel.
         hotKeys.register(keyCode: kVK_ANSI_V, modifiers: HotKeyManager.command | HotKeyManager.shift) { [weak self] in
             self?.quickAccessPanel.toggle()
